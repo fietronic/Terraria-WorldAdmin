@@ -81,7 +81,7 @@ function serverSessionName(array $server, array $config): string
 
 function tmuxHasSession(string $session, array $config): bool
 {
-    $command = 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux has-session -t ' . escapeshellarg($session) . ' 2>/dev/null';
+    $command = 'tmux has-session -t ' . escapeshellarg($session) . ' 2>/dev/null';
     exec($command, $output, $code);
     return $code === 0;
 }
@@ -101,7 +101,7 @@ function runCommand(string $command): array
 
 function tmuxSend(string $session, string $command, array $config): array
 {
-    $prefix = 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux send-keys -t ' . escapeshellarg($session) . ' ';
+    $prefix = 'tmux send-keys -t ' . escapeshellarg($session) . ' ';
     $enter = runCommand($prefix . 'Enter');
     $send = runCommand($prefix . escapeshellarg($command) . ' Enter');
 
@@ -154,7 +154,7 @@ function buildStartCommand(array $server, array $config): string
         $args[] = '-motd ' . escapeshellarg($server['motd']);
     }
 
-    return 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' ' . escapeshellarg($binary) . ' ' . implode(' ', $args);
+    return escapeshellarg($binary) . ' ' . implode(' ', $args);
 }
 
 function startServer(array $server, array $config): array
@@ -165,7 +165,7 @@ function startServer(array $server, array $config): array
     }
 
     $command = buildStartCommand($server, $config);
-    $wrapper = 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux new-session -d -s ' . escapeshellarg($session) . ' "bash -lc ' . escapeshellarg($command) . '"';
+    $wrapper = 'tmux new-session -d -s ' . escapeshellarg($session) . ' "bash -lc ' . escapeshellarg($command) . '"';
     $result = runCommand($wrapper);
 
     return [
@@ -185,7 +185,7 @@ function stopServer(array $server): array
     }
 
     $exitResponse = tmuxSend($session, 'exit', $config);
-    $kill = runCommand('sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux kill-session -t ' . escapeshellarg($session));
+    $kill = runCommand('tmux kill-session -t ' . escapeshellarg($session));
 
     return [
         'message' => 'Server stopped.',
