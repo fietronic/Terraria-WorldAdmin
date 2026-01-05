@@ -7,13 +7,32 @@ body {
 header {
     background: #111;
     padding: 20px;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
     border-bottom: 1px solid #333;
 }
 h1 {
     margin: 0;
     font-size: 24px;
     letter-spacing: 1px;
+}
+.logout-link {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #f3f3f3;
+    text-decoration: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #2c6dac;
+    font-weight: bold;
+}
+
+.logout-link:hover {
+    background: #3b7fc4;
 }
 .container {
     padding: 20px;
@@ -121,31 +140,6 @@ input, select, textarea {
     border: 1px solid #333;
     background: #111;
     color: #f3f3f3;
-}
-#status-box {
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    width: 320px;
-    max-width: 90vw;
-    background: rgba(20, 20, 20, 0.9);
-    border: 1px solid #444;
-    border-radius: 8px;
-    padding: 10px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
-    z-index: 1200;
-}
-#status-box .entry {
-    margin-bottom: 6px;
-    padding: 8px;
-    border-radius: 6px;
-    background: #2d2d2d;
-    animation: fadeOut 5s forwards;
-}
-@keyframes fadeOut {
-    0% { opacity: 1; }
-    80% { opacity: 1; }
-    100% { opacity: 0; }
 }
 .time-actions {
     grid-template-columns: repeat(2, 1fr);
