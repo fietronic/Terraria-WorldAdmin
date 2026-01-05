@@ -6,6 +6,19 @@ $config = require __DIR__ . '/config.php';
 const SESSION_KEY = 'terraria_admin_authenticated_at';
 const SESSION_TTL = 28800; // 8 hours
 
+function currentUrl(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    if (!empty($_SERVER['REQUEST_SCHEME'])) {
+        $scheme = $_SERVER['REQUEST_SCHEME'];
+    }
+
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $uri = $_SERVER['REQUEST_URI'] ?? '/';
+
+    return $scheme . '://' . $host . $uri;
+}
+
 function saveConfig(array $config): void
 {
     $export = var_export($config, true);
@@ -197,6 +210,7 @@ function handleRequest(array $config): void
                 $_SESSION[SESSION_KEY] = time();
                 $response['success'] = true;
                 $response['message'] = 'Password set. Session created.';
+                $response['redirect'] = currentUrl();
             }
         }
 
@@ -211,12 +225,26 @@ function handleRequest(array $config): void
         exit;
     }
 
+    if ($action === 'logout') {
+        session_unset();
+        session_destroy();
+        session_start();
+        $response['success'] = true;
+        $response['message'] = 'Logged out.';
+        $response['redirect'] = currentUrl();
+
+        header('Content-Type: application/json');
+        echo json_encode($response);
+        exit;
+    }
+
     if ($action === 'login') {
         $password = $_POST['password'] ?? '';
         if (password_verify($password, $config['admin_password_hash'])) {
             $_SESSION[SESSION_KEY] = time();
             $response['success'] = true;
             $response['message'] = 'Login successful.';
+            $response['redirect'] = currentUrl();
         } else {
             $response['message'] = 'Invalid password.';
         }
@@ -367,6 +395,9 @@ function isRunning(array $server): bool
 <body>
 <header>
     <h1>Terraria World Admin</h1>
+    <?php if ($authenticated): ?>
+        <a href="#" id="logout-link" class="logout-link">Logout</a>
+    <?php endif; ?>
 </header>
 <?php if ($needsPassword): ?>
 <div class="container">
@@ -482,20 +513,9 @@ function isRunning(array $server): bool
     </div>
 </div>
 
-<div id="status-box"></div>
-
 <script>
     const serverCards = document.querySelectorAll('.card[data-id]');
-    const statusBox = document.getElementById('status-box');
     let activeServerId = null;
-
-    function flashStatus(text) {
-        const div = document.createElement('div');
-        div.className = 'entry';
-        div.textContent = text;
-        statusBox.appendChild(div);
-        setTimeout(() => div.remove(), 5000);
-    }
 
     function post(action, data = {}) {
         const formData = new FormData();
@@ -522,7 +542,6 @@ function isRunning(array $server): bool
 
         card.querySelector('.toggle').addEventListener('click', () => {
             post('toggle', { id }).then(resp => {
-                flashStatus(resp.message || 'Toggled');
                 if (resp.success) {
                     refreshCard(card, !!resp.running);
                 }
@@ -530,7 +549,7 @@ function isRunning(array $server): bool
         });
 
         card.querySelector('.save').addEventListener('click', () => {
-            post('save', { id }).then(resp => flashStatus(resp.message || 'Save sent'));
+            post('save', { id });
         });
 
         card.querySelector('.time').addEventListener('click', () => {
@@ -562,8 +581,7 @@ function isRunning(array $server): bool
 
     document.querySelectorAll('#time-overlay [data-time]').forEach(btn => {
         btn.addEventListener('click', () => {
-            post('time', { id: activeServerId, time: btn.dataset.time })
-                .then(resp => flashStatus(resp.message || 'Time updated'));
+            post('time', { id: activeServerId, time: btn.dataset.time });
             document.getElementById('time-overlay').style.display = 'none';
         });
     });
@@ -575,7 +593,6 @@ function isRunning(array $server): bool
         fetch('', { method: 'POST', body: new FormData(evt.target) })
             .then(res => res.json())
             .then(resp => {
-                flashStatus(resp.message || 'Saved');
                 const card = document.querySelector(`.card[data-id="${data.id}"]`);
                 if (card) {
                     card.dataset.motd = data.motd || '';
@@ -597,12 +614,23 @@ function isRunning(array $server): bool
         fetch('', { method: 'POST', body: fd })
             .then(res => res.json())
             .then(resp => {
-                flashStatus(resp.message || 'Server created');
                 if (resp.success) {
                     window.location.reload();
                 }
-            });
+        });
     });
+
+    const logoutLink = document.getElementById('logout-link');
+    if (logoutLink) {
+        logoutLink.addEventListener('click', evt => {
+            evt.preventDefault();
+            post('logout').then(resp => {
+                if (resp.success && resp.redirect) {
+                    window.location.href = resp.redirect;
+                }
+            });
+        });
+    }
 </script>
 <?php endif; ?>
 
@@ -621,7 +649,11 @@ function isRunning(array $server): bool
                     authStatus.textContent = resp.message || 'Request complete';
                 }
                 if (resp.success) {
-                    window.location.reload();
+                    if (resp.redirect) {
+                        window.location.href = resp.redirect;
+                    } else {
+                        window.location.reload();
+                    }
                 }
             });
     }
