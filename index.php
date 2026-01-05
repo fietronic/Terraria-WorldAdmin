@@ -92,14 +92,38 @@ function runCommand(string $command): array
     $code = 0;
     exec($command . ' 2>&1', $output, $code);
 
-    return [$output, $code];
+    return [
+        'command' => $command,
+        'output' => $output,
+        'code' => $code,
+    ];
 }
 
 function tmuxSend(string $session, string $command, array $config): array
 {
     $prefix = 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux send-keys -t ' . escapeshellarg($session) . ' ';
-    runCommand($prefix . 'Enter');
-    return runCommand($prefix . escapeshellarg($command) . ' Enter');
+    $enter = runCommand($prefix . 'Enter');
+    $send = runCommand($prefix . escapeshellarg($command) . ' Enter');
+
+    return [
+        'output' => $send['output'],
+        'code' => $send['code'],
+        'command' => $send['command'],
+        'debug' => [$enter, $send],
+    ];
+}
+
+function appendDebug(array &$response, array $entries): void
+{
+    if (empty($entries)) {
+        return;
+    }
+
+    if (!isset($response['debug'])) {
+        $response['debug'] = [];
+    }
+
+    $response['debug'] = array_merge($response['debug'], $entries);
 }
 
 function buildStartCommand(array $server, array $config): string
@@ -142,12 +166,13 @@ function startServer(array $server, array $config): array
 
     $command = buildStartCommand($server, $config);
     $wrapper = 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux new-session -d -s ' . escapeshellarg($session) . ' "bash -lc ' . escapeshellarg($command) . '"';
-    [$output, $code] = runCommand($wrapper);
+    $result = runCommand($wrapper);
 
     return [
-        'message' => $code === 0 ? 'Server starting via tmux session ' . $session : 'Failed to start server',
-        'output' => $output,
+        'message' => $result['code'] === 0 ? 'Server starting via tmux session ' . $session : 'Failed to start server',
+        'output' => $result['output'],
         'session' => $session,
+        'debug' => [$result],
     ];
 }
 
@@ -159,10 +184,14 @@ function stopServer(array $server): array
         return ['message' => 'Server already stopped.'];
     }
 
-    tmuxSend($session, 'exit', $config);
-    runCommand('sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux kill-session -t ' . escapeshellarg($session));
+    $exitResponse = tmuxSend($session, 'exit', $config);
+    $kill = runCommand('sudo -u ' . escapeshellarg($config['tmux_user']) . ' tmux kill-session -t ' . escapeshellarg($session));
 
-    return ['message' => 'Server stopped.', 'session' => $session];
+    return [
+        'message' => 'Server stopped.',
+        'session' => $session,
+        'debug' => array_merge($exitResponse['debug'] ?? [], [$kill]),
+    ];
 }
 
 function validatePort(int $port): bool
@@ -310,8 +339,10 @@ function handleRequest(array $config): void
 
             $wasRunning = tmuxHasSession(serverSessionName($server, $config), $config);
             if ($wasRunning) {
-                stopServer($server);
-                startServer($server, $config);
+                $stopResponse = stopServer($server);
+                appendDebug($response, $stopResponse['debug'] ?? []);
+                $startResponse = startServer($server, $config);
+                appendDebug($response, $startResponse['debug'] ?? []);
             }
 
             $response['success'] = true;
@@ -517,6 +548,12 @@ function isRunning(array $server): bool
     const serverCards = document.querySelectorAll('.card[data-id]');
     let activeServerId = null;
 
+    function logDebug(resp) {
+        if (resp && resp.debug) {
+            console.log('Debug output:', resp.debug);
+        }
+    }
+
     function post(action, data = {}) {
         const formData = new FormData();
         formData.append('action', action);
@@ -545,11 +582,12 @@ function isRunning(array $server): bool
                 if (resp.success) {
                     refreshCard(card, !!resp.running);
                 }
+                logDebug(resp);
             });
         });
 
         card.querySelector('.save').addEventListener('click', () => {
-            post('save', { id });
+            post('save', { id }).then(logDebug);
         });
 
         card.querySelector('.time').addEventListener('click', () => {
@@ -581,7 +619,7 @@ function isRunning(array $server): bool
 
     document.querySelectorAll('#time-overlay [data-time]').forEach(btn => {
         btn.addEventListener('click', () => {
-            post('time', { id: activeServerId, time: btn.dataset.time });
+            post('time', { id: activeServerId, time: btn.dataset.time }).then(logDebug);
             document.getElementById('time-overlay').style.display = 'none';
         });
     });
@@ -602,6 +640,7 @@ function isRunning(array $server): bool
                     card.querySelector('.meta').textContent = `Port ${data.port} · Max ${max}`;
                 }
                 document.getElementById('edit-overlay').style.display = 'none';
+                logDebug(resp);
             });
     });
 
@@ -649,13 +688,11 @@ function isRunning(array $server): bool
                     authStatus.textContent = resp.message || 'Request complete';
                 }
                 if (resp.success) {
-                    if (resp.redirect) {
-                        window.location.href = resp.redirect;
-                    } else {
-                        window.location.reload();
-                    }
+                    const target = resp.redirect || window.location.href;
+                    window.location.replace(target);
                 }
-            });
+            })
+            .catch(() => window.location.reload());
     }
 
     if (passwordForm) {
