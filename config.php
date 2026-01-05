@@ -8,6 +8,5 @@ return [
     'require_password' => true,
     'data_file' => __DIR__ . '/servers.json',
     'tmux_prefix' => 'terraria_admin_',
-    'tmux_user' => 'www-data',
     'admin_password_hash' => '',
 ];
