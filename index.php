@@ -154,7 +154,7 @@ function buildStartCommand(array $server, array $config): string
         $args[] = '-motd ' . escapeshellarg($server['motd']);
     }
 
-    return 'sudo -u ' . escapeshellarg($config['tmux_user']) . ' ' . escapeshellarg($binary) . ' ' . implode(' ', $args);
+    return escapeshellarg($binary) . ' ' . implode(' ', $args);
 }
 
 function startServer(array $server, array $config): array
