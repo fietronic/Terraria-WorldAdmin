@@ -626,9 +626,10 @@ function isRunning(array $server): bool
 
     document.getElementById('edit-form').addEventListener('submit', evt => {
         evt.preventDefault();
-        const data = Object.fromEntries(new FormData(evt.target).entries());
-        data.action = 'edit';
-        fetch('', { method: 'POST', body: new FormData(evt.target) })
+        const fd = new FormData(evt.target);
+        fd.append('action', 'edit');
+        const data = Object.fromEntries(fd.entries());
+        fetch('', { method: 'POST', body: fd })
             .then(res => res.json())
             .then(resp => {
                 const card = document.querySelector(`.card[data-id="${data.id}"]`);
