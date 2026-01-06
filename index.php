@@ -56,27 +56,74 @@ function requireAuth(array $config): void
     $_SESSION[SESSION_KEY] = time();
 }
 
-function loadServers(array $config): array
+function loadState(array $config): array
 {
     if (!file_exists($config['data_file'])) {
-        file_put_contents($config['data_file'], json_encode([], JSON_PRETTY_PRINT));
+        file_put_contents($config['data_file'], json_encode(['servers' => [], 'active_server' => null], JSON_PRETTY_PRINT));
     }
 
     $json = file_get_contents($config['data_file']);
     $decoded = json_decode($json, true);
 
-    return is_array($decoded) ? $decoded : [];
+    if (!is_array($decoded)) {
+        return ['servers' => [], 'active_server' => null];
+    }
+
+    if (array_keys($decoded) === range(0, count($decoded) - 1)) {
+        return ['servers' => $decoded, 'active_server' => null];
+    }
+
+    $servers = $decoded['servers'] ?? [];
+    $activeServer = $decoded['active_server'] ?? null;
+
+    return [
+        'servers' => is_array($servers) ? $servers : [],
+        'active_server' => is_numeric($activeServer) ? (int) $activeServer : null,
+    ];
 }
 
-function saveServers(array $config, array $servers): void
+function saveState(array $config, array $state): void
 {
-    file_put_contents($config['data_file'], json_encode($servers, JSON_PRETTY_PRINT));
+    file_put_contents($config['data_file'], json_encode($state, JSON_PRETTY_PRINT));
 }
 
-function serverSessionName(array $server, array $config): string
+function getActiveServerId(): ?int
 {
-    $safe = preg_replace('/[^a-zA-Z0-9_]+/', '_', $server['world_name']);
-    return rtrim($config['tmux_prefix'], '_') . '_' . strtolower($safe);
+    return $GLOBALS['active_server_id'] ?? null;
+}
+
+function setActiveServerId(?int $id): void
+{
+    $GLOBALS['active_server_id'] = $id;
+}
+
+function loadServers(array $config): array
+{
+    $state = loadState($config);
+    setActiveServerId($state['active_server']);
+
+    return $state['servers'];
+}
+
+function saveServers(array $config, array $servers, ?int $activeServerId = null): void
+{
+    $state = loadState($config);
+
+    if ($activeServerId === null) {
+        $activeServerId = $state['active_server'] ?? null;
+    }
+
+    saveState($config, [
+        'servers' => $servers,
+        'active_server' => $activeServerId,
+    ]);
+
+    setActiveServerId($activeServerId);
+}
+
+function serverSessionName(array $config): string
+{
+    return rtrim($config['tmux_prefix'], '_');
 }
 
 function tmuxHasSession(string $session, array $config): bool
@@ -157,40 +204,60 @@ function buildStartCommand(array $server, array $config): string
     return escapeshellarg($binary) . ' ' . implode(' ', $args);
 }
 
-function startServer(array $server, array $config): array
+function startServer(array $server, array $config, int $id, array $servers): array
 {
-    $session = serverSessionName($server, $config);
+    $session = serverSessionName($config);
     if (tmuxHasSession($session, $config)) {
-        return ['message' => 'Server already running.', 'session' => $session];
+        return [
+            'message' => 'Another server is already running.',
+            'session' => $session,
+            'active_server' => getActiveServerId(),
+            'success' => false,
+        ];
     }
 
     $command = buildStartCommand($server, $config);
     $wrapper = 'tmux new-session -d -s ' . escapeshellarg($session) . ' "bash -lc ' . escapeshellarg($command) . '"';
     $result = runCommand($wrapper);
 
+    $success = $result['code'] === 0;
+    if ($success) {
+        saveServers($config, $servers, $id);
+    }
+
     return [
-        'message' => $result['code'] === 0 ? 'Server starting via tmux session ' . $session : 'Failed to start server',
+        'message' => $success ? 'Server starting via tmux session ' . $session : 'Failed to start server',
         'output' => $result['output'],
         'session' => $session,
         'debug' => [$result],
+        'success' => $success,
     ];
 }
 
-function stopServer(array $server): array
+function stopServer(array $server, int $id, array $servers): array
 {
     $config = $GLOBALS['config'];
-    $session = serverSessionName($server, $config);
+    $session = serverSessionName($config);
     if (!tmuxHasSession($session, $config)) {
-        return ['message' => 'Server already stopped.'];
+        if (getActiveServerId() === $id) {
+            saveServers($config, $servers, null);
+        }
+
+        return ['message' => 'Server already stopped.', 'success' => false];
     }
 
     $exitResponse = tmuxSend($session, 'exit', $config);
     $kill = runCommand('tmux kill-session -t ' . escapeshellarg($session));
 
+    if (getActiveServerId() === $id) {
+        saveServers($config, $servers, null);
+    }
+
     return [
         'message' => 'Server stopped.',
         'session' => $session,
         'debug' => array_merge($exitResponse['debug'] ?? [], [$kill]),
+        'success' => true,
     ];
 }
 
@@ -208,7 +275,7 @@ function ensureServerData(array $config): array
         $server['max_players'] = $server['max_players'] ?? $config['default_max_players'];
     }
 
-    saveServers($config, $servers);
+    saveServers($config, $servers, getActiveServerId());
 
     return $servers;
 }
@@ -297,19 +364,33 @@ function handleRequest(array $config): void
             if (!isset($server)) {
                 break;
             }
-            if (tmuxHasSession(serverSessionName($server, $config), $config)) {
-                $response = stopServer($server);
-            } else {
-                $response = startServer($server, $config);
+            $activeId = getActiveServerId();
+            $session = serverSessionName($config);
+
+            if (tmuxHasSession($session, $config) && $activeId !== $id) {
+                $response['message'] = 'Another server is already running.';
+                $response['running'] = false;
+                break;
             }
-            $response['running'] = tmuxHasSession(serverSessionName($server, $config), $config);
-            $response['success'] = true;
+
+            if (tmuxHasSession($session, $config)) {
+                $response = stopServer($server, $id, $servers);
+            } else {
+                $response = startServer($server, $config, $id, $servers);
+            }
+            $response['running'] = isRunning($server, $id);
+            $response['success'] = $response['success'] ?? true;
             break;
         case 'save':
             if (!isset($server)) {
                 break;
             }
-            $response = tmuxSend(serverSessionName($server, $config), 'save', $config);
+            if (!isRunning($server, $id)) {
+                $response['message'] = 'Server is not running.';
+                break;
+            }
+
+            $response = tmuxSend(serverSessionName($config), 'save', $config);
             $response['message'] = 'Save command sent to server.';
             $response['success'] = true;
             break;
@@ -317,7 +398,12 @@ function handleRequest(array $config): void
             if (!isset($server) || empty($_POST['time'])) {
                 break;
             }
-            $response = tmuxSend(serverSessionName($server, $config), $_POST['time'], $config);
+            if (!isRunning($server, $id)) {
+                $response['message'] = 'Server is not running.';
+                break;
+            }
+
+            $response = tmuxSend(serverSessionName($config), $_POST['time'], $config);
             $response['message'] = ucfirst($_POST['time']) . ' command sent to server.';
             $response['success'] = true;
             break;
@@ -337,17 +423,17 @@ function handleRequest(array $config): void
 
             saveServers($config, $servers);
 
-            $wasRunning = tmuxHasSession(serverSessionName($server, $config), $config);
+            $wasRunning = isRunning($server, $id);
             if ($wasRunning) {
-                $stopResponse = stopServer($server);
+                $stopResponse = stopServer($server, $id, $servers);
                 appendDebug($response, $stopResponse['debug'] ?? []);
-                $startResponse = startServer($server, $config);
+                $startResponse = startServer($server, $config, $id, $servers);
                 appendDebug($response, $startResponse['debug'] ?? []);
             }
 
             $response['success'] = true;
             $response['message'] = 'Server settings saved' . ($wasRunning ? ' and server restarted.' : '.');
-            $response['running'] = tmuxHasSession(serverSessionName($server, $config), $config);
+            $response['running'] = isRunning($server, $id);
             break;
         case 'create':
             $worldName = trim($_POST['world_name'] ?? '');
@@ -408,10 +494,11 @@ handleRequest($config);
 $authenticated = isAuthenticated($config);
 $servers = $authenticated ? ensureServerData($config) : [];
 
-function isRunning(array $server): bool
+function isRunning(array $server, int $id): bool
 {
     $config = $GLOBALS['config'];
-    return tmuxHasSession(serverSessionName($server, $config), $config);
+
+    return getActiveServerId() === $id && tmuxHasSession(serverSessionName($config), $config);
 }
 
 ?>
@@ -460,7 +547,7 @@ function isRunning(array $server): bool
 </div>
 <?php else: ?>
 <div class="container">
-    <?php foreach ($servers as $id => $server): $running = isRunning($server); ?>
+    <?php foreach ($servers as $id => $server): $running = isRunning($server, $id); ?>
         <div
             class="card"
             data-id="<?= $id ?>"
