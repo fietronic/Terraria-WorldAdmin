@@ -312,7 +312,9 @@ function renderPage(array $data, array $messages, array $config): void {
                         <h2><?php echo htmlspecialchars($server['world']); ?></h2>
                         <div class="meta">Port: <?php echo htmlspecialchars($server['port']); ?> • Max players: <?php echo htmlspecialchars($server['max_players']); ?></div>
                         <div class="meta">MOTD: <?php echo htmlspecialchars($server['motd']); ?></div>
-                        <div class="meta">Password: <?php echo $server['password'] !== '' ? htmlspecialchars($server['password']) : 'None'; ?></div>
+                        
+                        <?php if($server['password'] !== ''){ $html_password = '<span class="hover_reveal">' . htmlspecialchars($server['password']) . '</span>'; } else { $html_password = 'None'; } ?>
+                        <div class="meta">Password: <?php echo $html_password; ?></div>
                         <?php if ($active): ?><span class="badge">Active</span><?php endif; ?>
                         <div class="actions">
                             <form method="POST" style="display:inline;">
